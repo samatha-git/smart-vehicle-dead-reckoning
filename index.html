@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Smart Vehicle Dead Reckoning Simulator</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    :root { --navy:#10243a; --blue:#1769aa; --pale:#eef5fb; --green:#13805c; --orange:#c56b17; }
+    * { box-sizing:border-box; }
+    body { margin:0; font-family:Arial,Helvetica,sans-serif; color:#1d2b38; background:#f3f6f9; }
+    header { padding:20px 22px; color:white; background:linear-gradient(120deg,#10243a,#1769aa); }
+    header h1 { margin:0 0 6px; font-size:clamp(21px,3vw,30px); }
+    header p { margin:0; color:#e4eef7; line-height:1.45; }
+    .layout { display:grid; grid-template-columns:330px 1fr; gap:14px; padding:14px; max-width:1500px; margin:auto; }
+    .panel { background:white; border-radius:14px; padding:16px; box-shadow:0 3px 14px #152b3d12; }
+    h2 { font-size:17px; margin:0 0 14px; color:var(--navy); }
+    .field { margin:13px 0; }
+    label { display:flex; justify-content:space-between; gap:10px; font-size:13px; font-weight:700; margin-bottom:7px; }
+    input[type=range] { width:100%; accent-color:var(--blue); }
+    input[type=number] { width:100%; padding:9px; border:1px solid #cad5df; border-radius:8px; }
+    .buttons { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:15px; }
+    button { border:0; border-radius:9px; padding:10px 11px; cursor:pointer; font-weight:700; background:var(--blue); color:white; }
+    button.secondary { background:#e8eef4; color:#24384b; }
+    button.green { background:var(--green); }
+    button:disabled { opacity:.45; cursor:not-allowed; }
+    .hint { font-size:12px; color:#607181; line-height:1.5; margin-top:12px; }
+    #map { height: min(68vh,720px); min-height:430px; border-radius:14px; overflow:hidden; }
+    .map-panel { padding:10px; }
+    .stats { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px; margin-bottom:10px; }
+    .stat { background:var(--pale); border-radius:10px; padding:11px; }
+    .stat .name { color:#5b6c7c; font-size:11px; text-transform:uppercase; letter-spacing:.04em; }
+    .stat .value { font-size:18px; font-weight:800; margin-top:5px; color:var(--navy); overflow-wrap:anywhere; }
+    .status { padding:10px 12px; background:#fff6e8; color:#805014; border-radius:9px; font-size:13px; margin-bottom:10px; }
+    .status.running { background:#e5f6ee; color:#116847; }
+    .toggle { display:flex; align-items:center; gap:8px; font-size:13px; font-weight:700; margin:12px 0; }
+    .toggle input { accent-color:var(--blue); }
+    footer { max-width:1500px; margin:auto; padding:0 16px 20px; color:#667684; font-size:12px; line-height:1.5; }
+    @media(max-width:900px) { .layout { grid-template-columns:1fr; } #map { min-height:390px; height:55vh; } }
+  </style>
+</head>
+<body>
+<header>
+  <h1>Smart Vehicle Dead Reckoning Simulator</h1>
+  <p>Estimate a vehicle’s position when GPS is unavailable, visualize position drift, and compare it with occasional GPS correction.</p>
+</header>
+
+<main class="layout">
+  <section class="panel">
+    <h2>Simulation controls</h2>
+    <div class="field">
+      <label for="speed">Vehicle speed <span><b id="speedVal">36</b> km/h</span></label>
+      <input id="speed" type="range" min="5" max="100" value="36" />
+    </div>
+    <div class="field">
+      <label for="heading">Heading <span><b id="headingVal">90</b>°</span></label>
+      <input id="heading" type="range" min="0" max="359" value="90" />
+      <div class="hint">0° = north, 90° = east, 180° = south, 270° = west.</div>
+    </div>
+    <div class="field">
+      <label for="drift">Sensor/heading error <span><b id="driftVal">2</b>°</span></label>
+      <input id="drift" type="range" min="0" max="15" value="2" />
+    </div>
+    <label class="toggle"><input type="checkbox" id="gpsCorrection" checked /> Enable GPS correction every 10 seconds</label>
+    <div class="buttons">
+      <button id="startBtn" class="green">Start</button>
+      <button id="pauseBtn" class="secondary" disabled>Pause</button>
+      <button id="stepBtn" class="secondary">Move 1 step</button>
+      <button id="resetBtn" class="secondary">Reset</button>
+      <button id="locBtn" class="secondary" style="grid-column:1 / -1">Use my current location</button>
+    </div>
+    <p class="hint"><b>Try this:</b> turn GPS correction off, increase sensor error, then run the simulation. The estimated path will drift from the reference path. Turn correction on to see the estimate reset toward the reference.</p>
+    <p class="hint">You can also click anywhere on the map to choose a new starting position.</p>
+  </section>
+
+  <section class="panel map-panel">
+    <div class="stats">
+      <div class="stat"><div class="name">Elapsed time</div><div class="value" id="timeStat">0 s</div></div>
+      <div class="stat"><div class="name">Distance travelled</div><div class="value" id="distStat">0 m</div></div>
+      <div class="stat"><div class="name">Position error</div><div class="value" id="errorStat">0 m</div></div>
+      <div class="stat"><div class="name">GPS status</div><div class="value" id="gpsStat">AVAILABLE</div></div>
+    </div>
+    <div class="status" id="status">Ready. Start the simulation or click the map to choose a start point.</div>
+    <div id="map"></div>
+  </section>
+</main>
+
+<footer>
+  Educational prototype: the vehicle movement and GPS corrections are simulated, not connected to a real vehicle. Real dead-reckoning systems require calibrated sensors and careful handling of accumulated error. Map tiles require an internet connection.
+</footer>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const map = L.map('map').setView([17.734, 83.316], 16); // Visakhapatnam demo starting area
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19, attribution: '&copy; OpenStreetMap contributors'
+  }).addTo(map);
+
+  let truth = L.latLng(17.734, 83.316);
+  let estimate = L.latLng(17.734, 83.316);
+  let truthPoints = [truth], estimatePoints = [estimate];
+  let elapsed = 0, distance = 0, running = false, timer = null;
+  let gpsAvailable = true;
+  const truthLine = L.polyline(truthPoints, {color:'#16835d', weight:5, opacity:.85}).addTo(map);
+  const estimateLine = L.polyline(estimatePoints, {color:'#e17b22', weight:4, dashArray:'7 7'}).addTo(map);
+  const truthMarker = L.circleMarker(truth, {radius:7, color:'#0e6848', fillColor:'#28b37f', fillOpacity:1}).addTo(map).bindPopup('Reference position (simulated)');
+  const estimateMarker = L.marker(estimate, {title:'Dead reckoning estimate'}).addTo(map).bindPopup('Estimated vehicle position');
+  const startMarker = L.circleMarker(truth, {radius:5, color:'#1769aa', fillColor:'#fff', fillOpacity:1}).addTo(map).bindPopup('Start position');
+
+  function setStatus(message, active=false) {
+    $('status').textContent = message;
+    $('status').className = active ? 'status running' : 'status';
+  }
+  function syncLines() {
+    truthLine.setLatLngs(truthPoints);
+    estimateLine.setLatLngs(estimatePoints);
+    truthMarker.setLatLng(truth);
+    estimateMarker.setLatLng(estimate);
+  }
+  function updateStats() {
+    const err = map.distance(truth, estimate);
+    $('timeStat').textContent = elapsed + ' s';
+    $('distStat').textContent = distance < 1000 ? Math.round(distance) + ' m' : (distance/1000).toFixed(2) + ' km';
+    $('errorStat').textContent = err < 1000 ? err.toFixed(1) + ' m' : (err/1000).toFixed(2) + ' km';
+    $('gpsStat').textContent = gpsAvailable ? 'AVAILABLE' : 'DENIED';
+    $('gpsStat').style.color = gpsAvailable ? '#13805c' : '#c56b17';
+  }
+  function destination(start, meters, bearingDeg) {
+    const R = 6378137, bearing = bearingDeg * Math.PI / 180;
+    const lat1 = start.lat * Math.PI / 180, lon1 = start.lng * Math.PI / 180;
+    const d = meters / R;
+    const lat2 = Math.asin(Math.sin(lat1)*Math.cos(d) + Math.cos(lat1)*Math.sin(d)*Math.cos(bearing));
+    const lon2 = lon1 + Math.atan2(Math.sin(bearing)*Math.sin(d)*Math.cos(lat1), Math.cos(d)-Math.sin(lat1)*Math.sin(lat2));
+    return L.latLng(lat2 * 180/Math.PI, ((lon2 * 180/Math.PI + 540) % 360) - 180);
+  }
+  function moveOneStep() {
+    const speed = Number($('speed').value);
+    const heading = Number($('heading').value);
+    const error = Number($('drift').value);
+    const meters = speed * 1000 / 3600; // one simulation step = one second
+    elapsed += 1; distance += meters;
+    truth = destination(truth, meters, heading);
+    // small deterministic-ish sensor error, scaled by selected heading error
+    const wobble = (Math.random() * 2 - 1) * error;
+    estimate = destination(estimate, meters, heading + wobble);
+    gpsAvailable = false;
+    if ($('gpsCorrection').checked && elapsed % 10 === 0) {
+      // Simulate a GPS fix correcting accumulated position error.
+      estimate = L.latLng(
+        estimate.lat * 0.25 + truth.lat * 0.75,
+        estimate.lng * 0.25 + truth.lng * 0.75
+      );
+      gpsAvailable = true;
+      setStatus('GPS correction applied at ' + elapsed + ' s. The estimate moved closer to the reference position.', true);
+    } else {
+      setStatus('GPS unavailable: estimating position from speed and heading (dead reckoning).', running);
+    }
+    truthPoints.push(truth); estimatePoints.push(estimate);
+    if (truthPoints.length > 500) { truthPoints.shift(); estimatePoints.shift(); }
+    syncLines(); updateStats();
+  }
+  function start() {
+    if (running) return;
+    running = true;
+    $('startBtn').disabled = true; $('pauseBtn').disabled = false;
+    setStatus('Simulation running. The reference route is green; the dead-reckoning estimate is orange.', true);
+    timer = setInterval(moveOneStep, 1000);
+  }
+  function pause() {
+    running = false; clearInterval(timer); timer = null;
+    $('startBtn').disabled = false; $('pauseBtn').disabled = true;
+    setStatus('Paused. You can change speed/heading or move one step.');
+  }
+  function resetTo(latlng) {
+    pause(); truth = L.latLng(latlng.lat, latlng.lng); estimate = L.latLng(latlng.lat, latlng.lng);
+    truthPoints = [truth]; estimatePoints = [estimate]; elapsed = 0; distance = 0; gpsAvailable = true;
+    startMarker.setLatLng(truth); map.panTo(truth); syncLines(); updateStats();
+    setStatus('Reset complete. Choose settings and start the simulation.');
+  }
+  $('speed').addEventListener('input', () => $('speedVal').textContent = $('speed').value);
+  $('heading').addEventListener('input', () => $('headingVal').textContent = $('heading').value);
+  $('drift').addEventListener('input', () => $('driftVal').textContent = $('drift').value);
+  $('startBtn').addEventListener('click', start);
+  $('pauseBtn').addEventListener('click', pause);
+  $('stepBtn').addEventListener('click', () => { if (!running) moveOneStep(); });
+  $('resetBtn').addEventListener('click', () => resetTo(startMarker.getLatLng()));
+  $('locBtn').addEventListener('click', () => {
+    if (!navigator.geolocation) { setStatus('This browser does not support location access.'); return; }
+    navigator.geolocation.getCurrentPosition(pos => {
+      resetTo(L.latLng(pos.coords.latitude, pos.coords.longitude));
+      map.setZoom(17);
+      setStatus('Start position set from your browser location. Movement is still simulated.');
+    }, () => setStatus('Could not access location. Allow location permission or click the map to set a start point.'));
+  });
+  map.on('click', e => resetTo(e.latlng));
+  updateStats();
+})();
+</script>
+</body>
+</html>
